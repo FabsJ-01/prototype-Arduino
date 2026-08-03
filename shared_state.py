@@ -7,28 +7,49 @@ import serial.tools.list_ports
 
 # --- GLOBAL CONFIGURATION FOR GUI & SYSTEM ---
 
-def find_esp32_port():
+def find_arduino_port():
     """
-    Awtomatikong hahanapin ang ESP32-S3 sa mga available na USB ports,
-    gamit ang Espressif VID (303A) sa halip na naka-fix na port name.
-    Babalik sa fallback ports kung walang mahanap.
+    Awtomatikong hahanapin ang Arduino Uno sa available USB ports.
+    Arduino Uno VID: 0x2341 (Official) o 0x1A86 (CH340 clone)
     """
-    ports = serial.tools.list_ports.comports()
+    import serial.tools.list_ports as list_ports
+    import serial as pyserial
+
+    ports = list_ports.comports()
+
+    # Official Arduino Uno (VID: 0x2341)
     for port in ports:
-        if port.vid == 0x303A:
-            print(f"✅ Nahanap ang ESP32-S3 sa: {port.device}")
+        if port.vid == 0x2341:
+            print(f"✅ Nahanap ang Arduino Uno sa: {port.device}")
             return port.device
 
-    print("⚠️ Walang nahanap na Espressif device, sinusubukan ang fallback ports...")
+    # Clone Arduino Uno — CH340 chip (VID: 0x1A86)
+    for port in ports:
+        if port.vid == 0x1A86:
+            print(f"✅ Nahanap ang Arduino Uno Clone (CH340) sa: {port.device}")
+            return port.device
+
+    # Fallback — Windows COM ports
+    print("⚠️ Auto-detect failed, trying fallback ports...")
+    for fallback in ['COM3', 'COM4', 'COM5', 'COM6', 'COM7']:
+        try:
+            test = pyserial.Serial(fallback, 115200, timeout=0.1)
+            test.close()
+            print(f"⚠️ Using fallback port: {fallback}")
+            return fallback
+        except Exception:
+            continue
+
+    # Linux fallback
     for fallback in ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0']:
         if os.path.exists(fallback):
-            print(f"⚠️ Gumagamit ng fallback port: {fallback}")
+            print(f"⚠️ Using fallback port: {fallback}")
             return fallback
 
-    print("❌ Walang nahanap na anumang serial port!")
+    print("❌ Walang nahanap na Arduino Uno!")
     return None
 
-SERIAL_PORT = find_esp32_port()
+SERIAL_PORT = find_arduino_port()
 BAUD_RATE = 115200
 CONFIG_FILE = "config.json"
 
@@ -83,11 +104,21 @@ def save_config_to_local(name_id, name_public):
 
 
 def load_local_config():
+    global VENDO_ID, VENDO_NAME
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                if "vendo_id" in data:
+                    VENDO_ID = data["vendo_id"]
+                if "vendo_name" in data:
+                    VENDO_NAME = data["vendo_name"]
+                print(f"⚙️ Loaded local config: ID={VENDO_ID}, Name={VENDO_NAME}")
+                return data
         except Exception as e:
             print(f"⚠️ Error reading configuration: {e}")
             return None
     return None
+
+# ✅ ISA-EXECUTE AGAD PAGKA-IMPORT NITO SA PYTHON
+load_local_config()
