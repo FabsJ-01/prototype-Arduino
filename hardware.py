@@ -222,7 +222,8 @@ def process_scanned_student(scanned_uid):
                     raw_intake = raw_intake.replace('M', '').replace('m', '').strip()
                 
                 old_intake = float(raw_intake)
-                new_intake = round(old_intake + poured_ml, 1)
+                credited_ml = float(shared_state.coin_amount) * 100
+                new_intake = round(old_intake + credited_ml, 1)
                 finish_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
                 user_ref.update({
