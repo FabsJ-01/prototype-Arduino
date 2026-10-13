@@ -43,25 +43,18 @@ def process_scanned_student(scanned_uid):
         shared_state.active_student_uid = None
         return
 
-    shared_state.active_student_uid = scanned_uid#===================================================================================
-    user_ref.update({'is_dispensing': False, 'is_scanning': True, 'last_credits': 0})#'is_scanning': True ito papalitan <--
-
-
-    welcome_msg = f"👋 Welcome, {user_data.get('name', 'Student')}!"        
+    shared_state.active_student_uid = scanned_uid
+    user_ref.update({'coin_trigger': False, 'is_scanning': True, 'last_credits': 0})
+    welcome_msg = f"👋 Welcome, {user_data.get('name', 'Student')}!"
     print(welcome_msg)
     _set_status(welcome_msg, "#3498db")
-    print("📡 [FIREBASE STATUS]: 'is_scanning' = TRUE.")
 
     time.sleep(1.0)
-
     user_ref.update({
-        'is_scanning': False
+        'is_scanning': False,          
     })
-    print("📡 [FIREBASE STATUS]: 'is_scanning' = FALSE. (Waiting for coins...)")#=========================================================
 
-    # -------------------------------------------------------------
-    # STEP 2: COIN ACCUMULATION MODE SETUP
-    # -------------------------------------------------------------
+    print("📡 [FIREBASE STATUS]: 'is_scanning' = FALSE. (Waiting for coins...)")#=========================================================
 
     shared_state.coin_amount = 0
     shared_state.last_coin_time = time.time()
@@ -111,7 +104,7 @@ def process_scanned_student(scanned_uid):
         return
 
     shared_state.ml_to_dispense = shared_state.coin_amount * shared_state.LIVE_ML_PER_PESO
-    user_ref.update({'last_credits': shared_state.coin_amount, 'is_scanning': True})
+    user_ref.update({'last_credits': shared_state.coin_amount, 'is_dispensing': False, 'coin_trigger': True})# 'is_scanning': True,
 
     _set_status(
         f"🪙 Final Total: ₱{shared_state.coin_amount} ({shared_state.ml_to_dispense:.0f}mL). Tap Dispense on Phone!",
@@ -139,7 +132,13 @@ def process_scanned_student(scanned_uid):
             # ----------------------------------------------------
             # A. KAPAG NAG-TRIGGER NA NG DISPENSE (COIN / BUTTON)
             # ----------------------------------------------------
-            if current_status and current_status.get('coin_trigger') == True:
+            if current_status and current_status.get('is_dispensing') == True:
+
+                # 🔴 ILAGAY MO DITO AGAD: I-reset ang triggers sa Firebase para mawala ang button sa app
+                user_ref.update({
+                    'coin_trigger': False,
+                    'is_dispensing': False
+                })
 
                 dispense_started = True
                 shared_state.actual_dispensed_ml = 0.0
