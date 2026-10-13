@@ -222,8 +222,25 @@ def process_scanned_student(scanned_uid):
                     raw_intake = raw_intake.replace('M', '').replace('m', '').strip()
                 
                 old_intake = float(raw_intake)
-                credited_ml = float(shared_state.coin_amount) * 100
-                new_intake = round(old_intake + credited_ml, 1)
+
+                user_psu_id = user_data.get('psu_id', 'N/A')
+                is_full = poured_ml >= (shared_state.ml_to_dispense - 5)
+#==================================================================================
+
+                #credited_ml = float(shared_state.coin_amount) * 100
+
+                if is_full:
+                    # KUNG TAPOS NG BUO: Gamitin ang strict 100 mL per peso (kahit naka-adjust ang web admin calibration)
+                    added_ml_to_intake = float(shared_state.coin_amount) * 100
+                    status_label = "Success (Strict 100mL/peso)"
+                else:
+                    # KUNG NAG-PAUSE O NAPUTOL: Kung ano lang ang aktwal na pumatak sa baso, iyon lang ang idadagdag
+                    added_ml_to_intake = poured_ml
+                    status_label = "Partial (Paused/Timeout)"
+#==================================================================================
+
+
+                new_intake = round(old_intake + added_ml_to_intake, 1)
                 finish_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
                 user_ref.update({
@@ -450,7 +467,7 @@ def _start_hardware_listener():
 
                             # I-save habang nagpo-progress
                             shared_state.actual_dispensed_ml = round(dispensed_val, 1)
-
+                            shared_state.last_known_progress_ml = shared_state.actual_dispensed_ml#<-----------------------------
                             percent = min(100, round((dispensed_val / max(1.0, target_val)) * 100))
                             
                             if not getattr(shared_state, 'is_pump_paused', False):
@@ -466,6 +483,10 @@ def _start_hardware_listener():
                         
                         # Bigyan ng konting delay para makuha kung may huling DISPENSED_FINAL_ML na darating
                         time.sleep(0.3)
+
+                        # 🔴 SAFETY CHECK: Kung sakaling walang naitalang final ML pero may huling progress, kunin natin
+                        if shared_state.actual_dispensed_ml <= 0 and hasattr(shared_state, 'last_known_progress_ml'):
+                            shared_state.actual_dispensed_ml = shared_state.last_known_progress_ml#<======================================
                         
                         shared_state.is_flow_monitoring_mode = False
                         shared_state.is_pump_paused = False
