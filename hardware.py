@@ -42,10 +42,23 @@ def process_scanned_student(scanned_uid):
         _set_status(f"❌ UID {scanned_uid} Not Found!", "#e74c3c")
         shared_state.active_student_uid = None
         return
+# 🔴 IDAGDAG DITO: Suriin kung mayroon silang pending_ml mula sa nakaraang pause===================
+    pending_water = float(user_data.get('pending_ml', 0.0) or 0.0)
+    # I-save sa shared_state para mabasa ng ibang function (tulad ng coin listener loop)
+    shared_state.current_user_pending_water = pending_water
+
+    if pending_water > 0:
+        print(f"💡 [PENDING WATER DETECTED]: Mayroon kang {pending_water} mL na nakaimbak na sukling tubig!")
 
     shared_state.active_student_uid = scanned_uid
     user_ref.update({'coin_trigger': False, 'is_scanning': True, 'last_credits': 0})
-    welcome_msg = f"👋 Welcome, {user_data.get('name', 'Student')}!"
+
+    # Kung may pending water, pwede nating isama sa welcome message para alam ng user
+    if pending_water > 0:
+        welcome_msg = f"👋 Welcome, {user_data.get('name', 'Student')}! (May {pending_water}mL ka pang pending water)"
+    else:
+        welcome_msg = f"👋 Welcome, {user_data.get('name', 'Student')}!"
+
     print(welcome_msg)
     _set_status(welcome_msg, "#3498db")
 
@@ -98,12 +111,13 @@ def process_scanned_student(scanned_uid):
 
         time.sleep(0.2)
 
-    if shared_state.coin_amount == 0:
+    if shared_state.coin_amount == 0 and pending_water <= 0:
+        print("⏳ Walang barya at walang pending water. Kina-cancel ang session.")#,============================
         shared_state.active_student_uid = None
         _set_status("⏳ Ready to Scan QR Code", "#2ecc71")
         return
 
-    shared_state.ml_to_dispense = shared_state.coin_amount * shared_state.LIVE_ML_PER_PESO
+    shared_state.ml_to_dispense =( shared_state.coin_amount * shared_state.LIVE_ML_PER_PESO )+ pending_water #<<<<<<<<<<<<
     user_ref.update({'last_credits': shared_state.coin_amount, 'is_dispensing': False, 'coin_trigger': True})# 'is_scanning': True,
 
     _set_status(
@@ -239,12 +253,24 @@ def process_scanned_student(scanned_uid):
                     status_label = "Partial (Paused/Timeout)"
 #==================================================================================
 
+                # 🔴 KAKAHUIN ANG NATIRANG ML (SHORTAGE/PENDING) PARA SA SUSUNOD NA CLAIM
+                    target_expected_ml = float(shared_state.ml_to_dispense)
+                    shortage_ml = max(0.0, target_expected_ml - poured_ml)
+                
+                # Kunin ang kasalukuyang pending_ml sa database para mapagpatong-patong
+                current_pending = float(current_user_data.get('pending_ml', 0.0) or 0.0)
+                
+                if is_full:
+                    new_pending_ml = max(0.0, current_pending - (target_expected_ml - float(shared_state.coin_amount) * 100))  # Kung full, bawasan ang pending (dapat zero)
+                else:
+                        new_pending_ml = round(current_pending + shortage_ml, 1)
 
                 new_intake = round(old_intake + added_ml_to_intake, 1)
                 finish_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
                 user_ref.update({
                     'intake': new_intake,
+                    'pending_ml': new_pending_ml,  # Dito naiimbak ang sukling tubig para sa susunod na scan
                     'last_drink_time': finish_time,
                     'is_scanning': False,
                     'coin_trigger': False,
@@ -264,6 +290,7 @@ def process_scanned_student(scanned_uid):
                     'section': user_data.get('section', 'Unknown'),
                     'vendo_id': shared_state.VENDO_ID,
                     'amount_ml': poured_ml,
+                    'pending_ml_added': shortage_ml,
                     'timestamp': finish_time,
                     'status': "Success" if is_full else "Partial (Paused/Timeout)"
                 })
@@ -282,13 +309,46 @@ def process_scanned_student(scanned_uid):
                     previous_credits = current_credits  # Update local reference
 
                 # 🔹 Kapag WALANG BAGONG HULOG at lumagpas na sa IDLE_TIMEOUT_SECONDS:
-                if (time.time() - wait_start_time) > IDLE_TIMEOUT_SECONDS:
-                    print(f"\n⏰ [IDLE TIMEOUT] Lumagpas sa {IDLE_TIMEOUT_SECONDS:.0f}s na walang aksyon mula sa user. Clearing transaction...")
+                # if (time.time() - wait_start_time) > IDLE_TIMEOUT_SECONDS:
+                #     print(f"\n⏰ [IDLE TIMEOUT] Lumagpas sa {IDLE_TIMEOUT_SECONDS:.0f}s na walang aksyon mula sa user. Clearing transaction...")
                     
+                #     user_ref.update({
+                #         'is_scanning': False,
+                #         'coin_trigger': False,
+                #         'last_credits': 0
+                #     })
+                
+                    
+                    # if shared_state.esp32:
+                    #     try:
+                    #         with shared_state.serial_lock:
+                    #             shared_state.esp32.write(b'TIMEOUT_RESET\n')
+                    #     except Exception as e:
+                    #         print(f"⚠️ Serial Write Error (TIMEOUT_RESET): {e}")
+                    
+                    # break
+                # 🔹 Kapag lumagpas na sa IDLE_TIMEOUT_SECONDS nang hindi pinindot ang dispense:
+                if (time.time() - wait_start_time) > IDLE_TIMEOUT_SECONDS:
+                    print(f"\n⏰ [IDLE TIMEOUT] Lumagpas sa {IDLE_TIMEOUT_SECONDS:.0f}s. Kinakalkula ang pending water mula sa naiwang barya...")
+                    
+                    # 🔴 KUNIN ANG KASALUKUYANG PENDING AT ANG KATUMBAS NG BARYA SA ML
+                    current_user_data = user_ref.get() or {}
+                    current_pending = float(current_user_data.get('pending_ml', 0.0) or 0.0)
+                    
+                    # Kung may hinulog silang barya bago nag-timeout, gawin nating pending water para hindi masayang
+                    coin_to_ml = float(shared_state.coin_amount) * 100  # Strict 100ml per peso o gamit ang LIVE_ML
+                    unclaimed_pending = coin_to_ml + current_pending
+                    
+                    if unclaimed_pending > 0:
+                        print(f"📦 [TIMEOUT PENDING SAVED]: Nailipat ang ₱{shared_state.coin_amount} na barya bilang {unclaimed_pending} mL pending water.")
+
+                    # I-update ang Firebase: i-save ang pending_ml at i-reset ang iba
                     user_ref.update({
+                        'pending_ml': unclaimed_pending,
                         'is_scanning': False,
                         'coin_trigger': False,
-                        'last_credits': 0
+                        'last_credits': 0,
+                        'is_dispensing': False
                     })
                     
                     if shared_state.esp32:
@@ -299,7 +359,6 @@ def process_scanned_student(scanned_uid):
                             print(f"⚠️ Serial Write Error (TIMEOUT_RESET): {e}")
                     
                     break
-
         except Exception as e:
             print(f"⚠️ Error inside active listen loop: {e}")
             if dispense_started:
@@ -425,8 +484,10 @@ def _start_hardware_listener():
                     if coin_detected > 0:
                         shared_state.coin_amount += coin_detected
                         print(f"\n🪙 Coin Added: ₱{coin_detected} | Total Accumulated: ₱{shared_state.coin_amount}")
+                        current_pending = getattr(shared_state, 'current_user_pending_water', 0.0)
+                        total_expected_ml = (shared_state.coin_amount * shared_state.LIVE_ML_PER_PESO) + current_pending    
                         _set_status(
-                            f"🪙 Total Coins: ₱{shared_state.coin_amount} ({shared_state.coin_amount * shared_state.LIVE_ML_PER_PESO:.0f}mL).",
+                            f"🪙 Total: ₱{shared_state.coin_amount} + {current_pending}mL Pending ({total_expected_ml:.0f}mL).",
                             "#f1c40f"
                         )
 
